@@ -11,18 +11,42 @@ from queue import Queue
 SCALE_FACTOR = 2
 SCREEN_SIZE = (1230, 800)
 
-def drawEyeTracker(frame, W, H, eye_contour):
-	(x, y, w, h) = cv2.boundingRect(eye_contour)
-
-	dx, dy = int(w * 0.1), int(h * 0.1)
-	#cv2.rectangle(frame, (x + dx, y + dy), (x+w - dx, y+h - dy), (0, 255, 0), 2)
-	cv2.circle(frame, (x+w//2, y+h//2), h//3, (0, 0, 255), 2)
-
 
 def drawEye(frame, eye_coords):
 	for pt in eye_coords:
 		cv2.circle(frame, pt, 1, (0, 255, 0), 1)
 
+def findEyeCenter(eye_frame, display=False):
+	gray_frame = cv2.cvtColor(eye_frame, cv2.COLOR_BGR2GRAY)
+	blurred_frame = cv2.GaussianBlur(gray_frame, (7, 7), 0)
+	_, filtered_eyes = cv2.threshold(blurred_frame, gray_frame.mean()*0.425, 255, cv2.THRESH_BINARY)
+	contours, _ = cv2.findContours(filtered_eyes, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+	contours = sorted(contours, key=cv2.contourArea, reverse=True)[1:]
+
+	if display:
+		cv2.drawContours(eye_frame, [contours[0]], -1, (255, 0, 0), 1)
+
+	M = cv2.moments(contours[0])
+
+	cx, cy = 0, 0
+	try:
+		cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
+		if display:
+			cv2.circle(eye_frame, (cx, cy), 1, (0, 0, 255), 2)
+	except:
+		pass
+
+	return (cx, cy)
+
+def getEyeFrameBounds(frame, eye_points):
+	eye_bounds = {
+		'left': int( eye_points[0][0] * 0.95 ),
+		'right': int( eye_points[3][0] * 1.05 ),
+		'top': int( min(eye_points, key=lambda p: p[1])[1] * 0.95 ),
+		'bot': int( max(eye_points, key=lambda p: p[1])[1] * 1.05 )
+	}
+
+	return eye_bounds
 
 def packageEyeData(left_eye, right_eye, eye_centers):
 	def findFrame(eye):
@@ -36,27 +60,6 @@ def packageEyeData(left_eye, right_eye, eye_centers):
 
 	return (findFrame(left_eye), eye_centers[0]), (findFrame(right_eye), eye_centers[1])
 
-
-def findEyeCenters(eyes_frame, display=False):
-	gray_frame = cv2.cvtColor(eyes_frame, cv2.COLOR_BGR2GRAY)
-	blurred_frame = cv2.GaussianBlur(gray_frame, (7, 7), 0)
-	_, filtered_eyes = cv2.threshold(blurred_frame, gray_frame.mean()*0.55, 255, cv2.THRESH_BINARY)
-	contours, _ = cv2.findContours(filtered_eyes, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-	contours = sorted(contours, key=cv2.contourArea, reverse=True)
-
-	eye_centers = []
-	for contour in contours[1:3]:
-		if display:
-			cv2.drawContours(eyes_frame, [contour], -1, (255, 0, 0), 1)
-		M = cv2.moments(contour)
-		try:
-			cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
-			eye_centers.append((cx, cy))
-			if display:
-				cv2.circle(eyes_frame, (cx, cy), 1, (0, 0, 255), 2)
-		except:
-			pass
-	return eye_centers
 
 
 def captureWebCamStream(queue, display=False):
@@ -81,27 +84,32 @@ def captureWebCamStream(queue, display=False):
 		
 		# Display the results
 		for landmarks in landmarks_ls:
-			left_eye = [(p[0] * SCALE_FACTOR, p[1] * SCALE_FACTOR) for p in landmarks['left_eye']]
-			right_eye = [(p[0] * SCALE_FACTOR, p[1] * SCALE_FACTOR) for p in landmarks['right_eye']]
-			
-			left = int( left_eye[0][0] * 0.95 )
-			right = int( right_eye[3][0] * 1.05 )
-			top = int( min(left_eye + right_eye, key=lambda p: p[1])[1] * 0.95 )
-			bottom = int( max(left_eye + right_eye, key=lambda p: p[1])[1] * 1.05 )
+			left_eye_points = [(p[0] * SCALE_FACTOR, p[1] * SCALE_FACTOR) for p in landmarks['left_eye']]
+			right_eye_points = [(p[0] * SCALE_FACTOR, p[1] * SCALE_FACTOR) for p in landmarks['right_eye']]
 
-			eyes_frame = frame[top:bottom, left:right, :]
-			eye_centers = findEyeCenters(eyes_frame, display=display)
+			l_bounds = getEyeFrameBounds(frame, left_eye_points)
+			r_bounds = getEyeFrameBounds(frame, right_eye_points)
 
-			for i in range(len(eye_centers)):
-				eye_centers[i] = tuple( np.add(eye_centers[i], (left, top)) )
+			left_eye_frame = frame[ l_bounds['top']:l_bounds['bot'], l_bounds['left']:l_bounds['right'], :]
+			right_eye_frame = frame[ r_bounds['top']:r_bounds['bot'], r_bounds['left']:r_bounds['right'], :]
 
-			eye_data = packageEyeData(left_eye, right_eye, eye_centers)
+			left_eye_center = findEyeCenter(left_eye_frame, display=display)
+			right_eye_center = findEyeCenter(right_eye_frame, display=display)
+
+			left_eye_center = tuple( np.add(left_eye_center, (l_bounds['left'], l_bounds['top'])) )
+			right_eye_center = tuple( np.add(right_eye_center, (r_bounds['left'], r_bounds['top'])) )
+
+			eye_data = packageEyeData(left_eye_points, right_eye_points, [left_eye_center, right_eye_center])
 			queue.put(eye_data)
 
+			look_point = processEyeData(frame, eye_data)
+			cv2.circle(frame, (look_point[0], len(frame)//2), 3, (255, 0, 255), 3)
+
 			if display:
-				drawEye(frame, left_eye)
-				drawEye(frame, right_eye)
-				cv2.imshow('Eyes_frame', eyes_frame)
+				drawEye(frame, left_eye_points)
+				drawEye(frame, right_eye_points)
+				cv2.imshow('left_eye_frame', left_eye_frame)
+				cv2.imshow('right_eye_frame', right_eye_frame)
 
 
 		if display:
@@ -169,10 +177,10 @@ if __name__ == '__main__':
 
 	inter_thread_queue = Queue()
 
-	#captureWebCamStream(inter_thread_queue, display=True)
-	web_cam_thread = Thread(target=captureWebCamStream, args=(inter_thread_queue,))
-	web_cam_thread.start()
+	captureWebCamStream(inter_thread_queue, display=True)
+	#web_cam_thread = Thread(target=captureWebCamStream, args=(inter_thread_queue,))
+	#web_cam_thread.start()
 
-	screenStream(inter_thread_queue, display=True)
+	#screenStream(inter_thread_queue, display=True)
 
 	cv2.destroyAllWindows()
