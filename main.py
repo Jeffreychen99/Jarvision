@@ -19,19 +19,18 @@ def drawEye(frame, eye_coords):
 def findEyeCenter(eye_frame, display=False):
 	gray_frame = cv2.cvtColor(eye_frame, cv2.COLOR_BGR2GRAY)
 	blurred_frame = cv2.GaussianBlur(gray_frame, (7, 7), 0)
-	_, filtered_eyes = cv2.threshold(blurred_frame, gray_frame.mean()*0.425, 255, cv2.THRESH_BINARY)
+	_, filtered_eyes = cv2.threshold(blurred_frame, blurred_frame.mean()*0.55, 255, cv2.THRESH_BINARY)
+	cv2.imshow('filtered', filtered_eyes)
 	contours, _ = cv2.findContours(filtered_eyes, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 	contours = sorted(contours, key=cv2.contourArea, reverse=True)[1:]
 
-	if display:
-		cv2.drawContours(eye_frame, [contours[0]], -1, (255, 0, 0), 1)
-
-	M = cv2.moments(contours[0])
-
 	cx, cy = 0, 0
 	try:
+		M = cv2.moments(contours[0])
 		cx, cy = int(M['m10']/M['m00']), int(M['m01']/M['m00'])
+
 		if display:
+			cv2.drawContours(eye_frame, [contours[0]], -1, (255, 0, 0), 1)
 			cv2.circle(eye_frame, (cx, cy), 1, (0, 0, 255), 2)
 	except:
 		pass
@@ -40,10 +39,10 @@ def findEyeCenter(eye_frame, display=False):
 
 def getEyeFrameBounds(frame, eye_points):
 	eye_bounds = {
-		'left': int( eye_points[0][0] * 0.95 ),
-		'right': int( eye_points[3][0] * 1.05 ),
-		'top': int( min(eye_points, key=lambda p: p[1])[1] * 0.95 ),
-		'bot': int( max(eye_points, key=lambda p: p[1])[1] * 1.05 )
+		'left': int( eye_points[0][0] * 0.975 ),
+		'right': int( eye_points[3][0] * 1.025 ),
+		'top': int( min(eye_points, key=lambda p: p[1])[1]  * 0.975 ),
+		'bot': int( max(eye_points, key=lambda p: p[1])[1] * 1.025 )
 	}
 
 	return eye_bounds
@@ -102,8 +101,8 @@ def captureWebCamStream(queue, display=False):
 			eye_data = packageEyeData(left_eye_points, right_eye_points, [left_eye_center, right_eye_center])
 			queue.put(eye_data)
 
-			look_point = processEyeData(frame, eye_data)
-			cv2.circle(frame, (look_point[0], len(frame)//2), 3, (255, 0, 255), 3)
+			look_point = (getLookPointX(frame, eye_data), len(frame) // 2)
+			cv2.circle(frame, look_point, 3, (255, 0, 255), 3)
 
 			if display:
 				drawEye(frame, left_eye_points)
@@ -124,23 +123,44 @@ def captureWebCamStream(queue, display=False):
 
 
 
-def processEyeData(frame, eye_data):
+def getLookPointX(frame, eye_data):
+	h, w, _ = frame.shape
+
 	left_data = eye_data[0]
 	right_data = eye_data[1]
 
 	left_center_x = (left_data[1][0] - left_data[0][0][0]) / (left_data[0][1][0] - left_data[0][0][0])
 	right_center_x = (right_data[1][0] - right_data[0][0][0]) / (right_data[0][1][0] - right_data[0][0][0])
 
+	avg_center_x = (left_center_x + right_center_x) / 2
+	x = avg_center_x
+
+	if avg_center_x >= 0.5:
+		x = max(left_center_x, right_center_x)
+	else:
+		x = min(left_center_x, right_center_x)
+
+	if avg_center_x >= 0.6:
+		x = (1 + x) / 2
+	elif avg_center_x <= 0.4:
+		x *= 0.3
+
+	print(x, avg_center_x)
+
+	return int(x * w)
+
+def getLookPointY(frame, eye_data):
+	h, w, _ = frame.shape
+
+	left_data = eye_data[0]
+	right_data = eye_data[1]
+
 	left_center_y = (left_data[1][1] - left_data[0][0][1]) / (left_data[0][1][1] - left_data[0][0][1])
 	right_center_y = (right_data[1][1] - right_data[0][0][1]) / (right_data[0][1][1] - right_data[0][0][1])
 
-	avg_center_x = (left_center_x + right_center_x) / 2
 	avg_center_y = (left_center_y + right_center_y) / 2
 
-	h, w, _ = frame.shape
-	look_point = ( int(avg_center_x * w), int(avg_center_y * h) )
-
-	return look_point
+	return int(avg_center_y * h)
 
 def screenStream(queue, display=False):
 	sct = mss()
