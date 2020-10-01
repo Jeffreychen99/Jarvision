@@ -1,6 +1,8 @@
 import time
 import numpy as np
 import cv2
+import pyjokes
+import wikipedia
 import face_recognition
 from mss import mss
 from PIL import Image
@@ -204,3 +206,41 @@ if __name__ == '__main__':
 	#screenStream(inter_thread_queue, display=True)
 
 	cv2.destroyAllWindows()
+	
+	def takeCommand():
+      
+    r = sr.Recognizer() 
+    r.energy_threshold = 400
+    r.dynamic_energy_threshold = True
+      
+    with sr.Microphone() as source: 
+          
+        print("Listening...") 
+        r.pause_threshold = 1
+        r.adjust_for_ambient_noise(source, duration=2)        
+        r.dynamic_energy_threshold = True 
+        audio = r.listen(source) 
+   
+    try: 
+        print("Recognizing...")     
+        query = r.recognize_google(audio, language ='en-in') 
+        print(f"User said: {query}\n") 
+   
+    except Exception as e: 
+        print(e)     
+        print("Unable to Recognize your voice. Please repeat")
+        speak("Unable to Recognize your voice. Please repeat")   
+        return "None"
+      
+    return query   
+if 'joke' in query:
+	jk=pyjokes.get_joke() 
+    	print(jk)
+    	speak(jk)
+else:  
+    speak('Searching Wikipedia...')
+    query = query.replace("wikipedia", "")
+    results = wikipedia.summary(query, sentences=2) 
+    speak("According to Wikipedia")
+    print(results)
+    speak(results)	
